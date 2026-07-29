@@ -9,11 +9,11 @@ def compare_estimates(
     """
     Compare parameter estimates across candidate models.
 
-    Expected columns in each input table:
+    Expected columns in every estimate table:
     parameter, constant, estimate
 
-    An outer merge is used so parameters that exist in only one
-    model are still retained.
+    An outer merge is used so model-specific parameters
+    remain in the comparison table.
     """
 
     if not estimate_tables:
@@ -82,13 +82,8 @@ def compare_metrics(
     """
     Compare model metrics across candidate models.
 
-    Expected input format:
+    Expected format:
     Metric plus exactly one model-value column.
-
-    Example:
-    Metric,ONE_COMP
-    AIC,-18021.749
-    BIC,-17959.939
     """
 
     if not metric_tables:
@@ -162,10 +157,8 @@ def calculate_metric_differences(
     """
     Calculate candidate minus reference for selected numeric metrics.
 
-    Example:
-    Difference = TWO_COMP - ONE_COMP
-
-    Non-numeric values are excluded automatically.
+    Difference direction:
+    candidate_model - reference_model
     """
 
     required_columns = {

@@ -16,22 +16,22 @@ CANDIDATE_MODEL = "TWO_COMP"
 
 
 estimates_1 = pd.read_excel(
-    "data/demo/model_1/estimates_1comp.xlsx",
+    "data/demo/compartment/model_1/estimates_1comp.xlsx",
     sheet_name="ONE_COMP",
 )
 
 metrics_1 = pd.read_excel(
-    "data/demo/model_1/metrics_1comp.xlsx",
+    "data/demo/compartment/model_1/metrics_1comp.xlsx",
     sheet_name="ONE_COMP",
 )
 
 estimates_2 = pd.read_excel(
-    "data/demo/model_2/estimates_2comp.xlsx",
+    "data/demo/compartment/model_2/estimates_2comp.xlsx",
     sheet_name="TWO_COMP",
 )
 
 metrics_2 = pd.read_excel(
-    "data/demo/model_2/metrics_2comp.xlsx",
+    "data/demo/compartment/model_2/metrics_2comp.xlsx",
     sheet_name="TWO_COMP",
 )
 
