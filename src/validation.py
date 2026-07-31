@@ -3,109 +3,236 @@ from __future__ import annotations
 import pandas as pd
 
 
-ESTIMATE_REQUIRED_COLUMNS = {
-    "parameter",
-    "constant",
-    "estimate",
-}
-
-
 def validate_estimate_table(
-    estimate_df: pd.DataFrame,
-    model_name: str,
-) -> None:
+    estimate_table: pd.DataFrame,
+    model_name: str | None = None,
+) -> pd.DataFrame:
     """
-    Validate one parameter-estimate table.
+    Validate one candidate model's estimate table.
+
+    Required columns:
+        parameter
+        constant
+        estimate
+
+    Different models may have different:
+        parameters;
+        OMEGA terms;
+        SIGMA terms;
+        numbers of rows.
+
+    model_name is optional to remain compatible with older function calls.
     """
 
-    if estimate_df.empty:
+    model_label = (
+        f" for '{model_name}'"
+        if model_name
+        else ""
+    )
+
+    if estimate_table.empty:
         raise ValueError(
-            f"{model_name} estimate table is empty."
+            f"The estimate table{model_label} is empty."
         )
 
+    required_columns = {
+        "parameter",
+        "constant",
+        "estimate",
+    }
+
     missing_columns = (
-        ESTIMATE_REQUIRED_COLUMNS
-        - set(estimate_df.columns)
+        required_columns
+        - set(estimate_table.columns)
     )
 
     if missing_columns:
-        raise ValueError(
-            f"{model_name} estimate table is missing columns: "
-            f"{sorted(missing_columns)}"
+        missing_text = ", ".join(
+            sorted(missing_columns)
         )
 
-    parameter_names = (
-        estimate_df["parameter"]
-        .astype(str)
+        raise ValueError(
+            f"Estimate table{model_label} is missing "
+            f"required columns: {missing_text}."
+        )
+
+    validated = estimate_table[
+        [
+            "parameter",
+            "constant",
+            "estimate",
+        ]
+    ].copy()
+
+    validated["parameter"] = (
+        validated["parameter"]
+        .astype("string")
         .str.strip()
     )
 
-    if parameter_names.eq("").any():
+    empty_parameter_mask = (
+        validated["parameter"].isna()
+        | validated["parameter"].eq("")
+    )
+
+    if empty_parameter_mask.any():
         raise ValueError(
-            f"{model_name} estimate table contains "
-            "a blank parameter name."
+            f"Estimate table{model_label} contains "
+            "an empty parameter name."
         )
 
-    duplicated_parameters = parameter_names[
-        parameter_names.duplicated()
-    ].tolist()
+    duplicate_mask = (
+        validated["parameter"]
+        .duplicated(keep=False)
+    )
 
-    if duplicated_parameters:
-        raise ValueError(
-            f"{model_name} estimate table contains duplicate "
-            f"parameters: {duplicated_parameters}"
+    if duplicate_mask.any():
+        duplicates = (
+            validated.loc[
+                duplicate_mask,
+                "parameter",
+            ]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
         )
+
+        raise ValueError(
+            f"Estimate table{model_label} contains "
+            "duplicate parameters: "
+            + ", ".join(duplicates)
+        )
+
+    validated["estimate"] = pd.to_numeric(
+        validated["estimate"],
+        errors="coerce",
+    )
+
+    invalid_estimate_mask = (
+        validated["estimate"].isna()
+    )
+
+    if invalid_estimate_mask.any():
+        invalid_parameters = (
+            validated.loc[
+                invalid_estimate_mask,
+                "parameter",
+            ]
+            .dropna()
+            .astype(str)
+            .tolist()
+        )
+
+        raise ValueError(
+            f"Estimate table{model_label} contains missing "
+            "or nonnumeric estimates for: "
+            + ", ".join(invalid_parameters)
+        )
+
+    return validated.reset_index(
+        drop=True
+    )
 
 
 def validate_metric_table(
-    metric_df: pd.DataFrame,
-    model_name: str,
-) -> None:
+    metric_table: pd.DataFrame,
+    model_name: str | None = None,
+) -> pd.DataFrame:
     """
-    Validate one model-metrics table.
+    Validate one candidate model's metric table.
+
+    Required format:
+        Metric | one model-value column
+
+    Metric values may be:
+        numeric;
+        TRUE/FALSE;
+        text;
+        likelihood-approximation descriptions;
+        shrinkage values.
+
+    Different models may contain different numbers of metric rows.
     """
 
-    if metric_df.empty:
+    model_label = (
+        f" for '{model_name}'"
+        if model_name
+        else ""
+    )
+
+    if metric_table.empty:
         raise ValueError(
-            f"{model_name} metrics table is empty."
+            f"The metric table{model_label} is empty."
         )
 
-    if "Metric" not in metric_df.columns:
+    if "Metric" not in metric_table.columns:
         raise ValueError(
-            f"{model_name} metrics table is missing "
-            "the Metric column."
+            f"Metric table{model_label} must contain "
+            "a 'Metric' column."
         )
 
     value_columns = [
         column
-        for column in metric_df.columns
+        for column in metric_table.columns
         if column != "Metric"
     ]
 
     if len(value_columns) != 1:
         raise ValueError(
-            f"{model_name} metrics table must contain "
-            "exactly one value column besides Metric."
+            f"Metric table{model_label} must contain exactly "
+            "one model-value column in addition to 'Metric'."
         )
 
-    metric_names = (
-        metric_df["Metric"]
-        .astype(str)
+    value_column = value_columns[0]
+
+    validated = metric_table[
+        [
+            "Metric",
+            value_column,
+        ]
+    ].copy()
+
+    validated["Metric"] = (
+        validated["Metric"]
+        .astype("string")
         .str.strip()
     )
 
-    if metric_names.eq("").any():
+    empty_metric_mask = (
+        validated["Metric"].isna()
+        | validated["Metric"].eq("")
+    )
+
+    if empty_metric_mask.any():
         raise ValueError(
-            f"{model_name} metrics table contains "
-            "a blank metric name."
+            f"Metric table{model_label} contains "
+            "an empty metric name."
         )
 
-    duplicated_metrics = metric_names[
-        metric_names.duplicated()
-    ].tolist()
+    duplicate_mask = (
+        validated["Metric"]
+        .duplicated(keep=False)
+    )
 
-    if duplicated_metrics:
-        raise ValueError(
-            f"{model_name} metrics table contains duplicate "
-            f"metrics: {duplicated_metrics}"
+    if duplicate_mask.any():
+        duplicates = (
+            validated.loc[
+                duplicate_mask,
+                "Metric",
+            ]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
         )
+
+        raise ValueError(
+            f"Metric table{model_label} contains "
+            "duplicate metrics: "
+            + ", ".join(duplicates)
+        )
+
+    return validated.reset_index(
+        drop=True
+    )

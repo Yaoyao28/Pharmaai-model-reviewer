@@ -1,46 +1,33 @@
 # PharmaAI Model Reviewer
 
-AI-assisted Population PK Model Reviewer
+A Streamlit application for sequential pharmacometric model review.
 
-## Goal
+## Workflow
 
-Build an AI application that helps pharmacometricians compare
-Population PK models and generate AI-assisted review reports.
+1. Optional absorption-model comparison
+2. Structural-model comparison
+3. Residual-error-model comparison
+4. Final base-model summary
 
-## Features
+## Supported comparisons
 
-- Configuration-driven model comparison
-- Parameter estimate comparison
-- Model metric comparison
-- Automatic metric difference calculation
-- Rule-based model recommendation
-- Diagnostic plot comparison
-- Input validation
-- Unit testing
+Candidate model names are discovered from folders rather than hard-coded.
 
-## Supported Comparisons
+Examples:
 
-- One-compartment vs two-compartment
-- Zero-order vs first-order absorption
+- ZERO ORDER vs FIRST ORDER
+- ONE COMP vs TWO COMP
+- ONE COMP vs MICHAELIS MENTEN
+- TWO COMP vs MICHAELIS MENTEN
+- ADDITIVE vs PROPORTIONAL
+- PROPORTIONAL vs COMBINED
 
-## Model Recommendation Logic
+## Model folder structure
 
-The application compares candidate and reference models using
-AIC, BIC, and OFV. Lower values favor the corresponding model.
-The recommendation is intended to support, not replace,
-scientific review of diagnostics and parameter plausibility.
+Each model folder contains:
 
-
-A lower objective function or information criterion alone does not    
-establish that a model is scientifically appropriate. Diagnostic
-plots, parameter plausibility, model stability, and intended use
-must also be considered.
-
-
-## Tech Stack
-
-- Python
-- Streamlit
-- Pandas
-- Plotly
-- OpenAI API
+```text
+model_folder/
+├── estimates.xlsx
+├── metrics.xlsx
+└── gof.png

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Callable
 
 import pandas as pd
 import streamlit as st
@@ -11,499 +11,895 @@ from src.comparison import (
     compare_estimates,
     compare_metrics,
 )
+from src.loaders import (
+    discover_models,
+    find_gof_image,
+    find_model_table,
+    format_folder_name,
+    load_estimate_table,
+    load_metric_table,
+)
+from src.models import CandidateModel
 from src.validation import (
     validate_estimate_table,
     validate_metric_table,
 )
+from src.workflow import (
+    ABSORPTION_STAGE,
+    ERROR_STAGE,
+    STRUCTURAL_STAGE,
+    STAGE_DEFINITIONS,
+    create_final_model_summary,
+)
 
 
-# =========================================================
-# Project root
-# =========================================================
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+ABSORPTION_DATA_DIR = DATA_DIR / "absorption"
+STRUCTURAL_DATA_DIR = DATA_DIR / "structural"
+ERROR_DATA_DIR = DATA_DIR / "residual_error"
 
-
-# =========================================================
-# Comparison configurations
-# =========================================================
-
-COMPARISON_CONFIGS: dict[str, dict[str, Any]] = {
-    "Compartment Model": {
-        "reference_model": "ONE_COMP",
-        "candidate_model": "TWO_COMP",
-
-        "reference_estimates_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "compartment"
-            / "model_1"
-            / "estimates_1comp.xlsx"
-        ),
-
-        "reference_metrics_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "compartment"
-            / "model_1"
-            / "metrics_1comp.xlsx"
-        ),
-
-        "reference_gof_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "compartment"
-            / "model_1"
-            / "gof_1comp.png"
-        ),
-
-        "candidate_estimates_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "compartment"
-            / "model_2"
-            / "estimates_2comp.xlsx"
-        ),
-
-        "candidate_metrics_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "compartment"
-            / "model_2"
-            / "metrics_2comp.xlsx"
-        ),
-
-        "candidate_gof_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "compartment"
-            / "model_2"
-            / "gof_2comp.png"
-        ),
-
-        "reference_sheet": "ONE_COMP",
-        "candidate_sheet": "TWO_COMP",
-
-        "description": (
-            "Compare one-compartment and two-compartment "
-            "structural models."
-        ),
-    },
-
-    "Absorption Model": {
-        "reference_model": "ZERO_ORDER",
-        "candidate_model": "FIRST_ORDER",
-
-        "reference_estimates_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "absorption"
-            / "model_1"
-            / "estimates_zero_order.xlsx"
-        ),
-
-        "reference_metrics_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "absorption"
-            / "model_1"
-            / "metrics_zero_order.xlsx"
-        ),
-
-        "reference_gof_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "absorption"
-            / "model_1"
-            / "gof_zero_order.png"
-        ),
-
-        "candidate_estimates_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "absorption"
-            / "model_2"
-            / "estimates_first_order.xlsx"
-        ),
-
-        "candidate_metrics_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "absorption"
-            / "model_2"
-            / "metrics_first_order.xlsx"
-        ),
-
-        "candidate_gof_path": (
-            PROJECT_ROOT
-            / "data"
-            / "demo"
-            / "absorption"
-            / "model_2"
-            / "gof_first_order.png"
-        ),
-
-        "reference_sheet": "ZERO_ORDER",
-        "candidate_sheet": "FIRST_ORDER",
-
-        "description": (
-            "Compare zero-order and first-order absorption "
-            "within the same one-compartment structure."
-        ),
-    },
-}
-
-
-# =========================================================
-# Metrics used in the difference table
-# =========================================================
-
-SELECTED_METRICS = [
-    "-2LL",
-    "AIC",
-    "BIC",
-    "Estimation Time",
-    "Optimized Parameters",
-    "(η-shrinkage) η₁",
-    "(η-shrinkage) η₂",
-    "(η-shrinkage) η₃",
-    "(η-shrinkage) η₄",
-    "(η-shrinkage) η₅",
-    "(ε-shrinkage) conc",
-]
-
-
-# =========================================================
-# Streamlit page setup
-# =========================================================
 
 st.set_page_config(
-    page_title="PharmaAI Model Review",
+    page_title="PharmaAI Model Reviewer",
     page_icon="📊",
     layout="wide",
 )
 
-st.title("Candidate Model Comparison")
 
-st.write(
-    "Compare model metrics, parameter estimates, and "
-    "diagnostic plots for candidate pharmacometric models."
-)
+def initialize_session_state() -> None:
+    defaults = {
+        "selected_absorption_model": None,
+        "selected_structural_model": None,
+        "selected_error_model": None,
+    }
 
-
-# =========================================================
-# Select comparison type
-# =========================================================
-
-comparison_type = st.selectbox(
-    "Comparison Type",
-    options=list(COMPARISON_CONFIGS.keys()),
-)
-
-config = COMPARISON_CONFIGS[comparison_type]
-
-reference_model = config["reference_model"]
-candidate_model = config["candidate_model"]
-
-st.info(
-    f"Current comparison: "
-    f"{reference_model} vs {candidate_model}"
-)
-
-st.caption(config["description"])
+    for key, default_value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
 
 
-# =========================================================
-# Run comparison
-# =========================================================
+def reset_after_absorption_change() -> None:
+    st.session_state["selected_structural_model"] = None
+    st.session_state["selected_error_model"] = None
 
-if st.button(
-    "Run Model Comparison",
-    type="primary",
-):
+
+def reset_after_structural_change() -> None:
+    st.session_state["selected_error_model"] = None
+
+
+def create_candidate_from_folder(
+    folder_name: str,
+    model_folder: Path,
+) -> CandidateModel:
+    model_name = format_folder_name(folder_name)
+
+    estimate_path = find_model_table(
+        model_folder=model_folder,
+        file_stem="estimates",
+    )
+
+    metric_path = find_model_table(
+        model_folder=model_folder,
+        file_stem="metrics",
+    )
+
+    gof_path = find_gof_image(model_folder)
+
+    estimate_table = load_estimate_table(
+        estimate_path
+    )
+
+    metric_table = load_metric_table(
+        metric_path
+    )
+
+    validated_estimates = validate_estimate_table(
+        estimate_table=estimate_table,
+        model_name=model_name,
+    )
+
+    validated_metrics = validate_metric_table(
+        metric_table=metric_table,
+        model_name=model_name,
+    )
+
+    return CandidateModel(
+        name=model_name,
+        estimates=validated_estimates,
+        metrics=validated_metrics,
+        folder=model_folder,
+        gof_path=gof_path,
+    )
+
+
+def display_two_model_gof_comparison(
+    reference_model: CandidateModel,
+    candidate_model: CandidateModel,
+) -> None:
+    st.subheader("4. GOF Comparison")
+
+    reference_column, candidate_column = st.columns(2)
+
+    with reference_column:
+        st.markdown(
+            f"#### {reference_model.name}"
+        )
+
+        if reference_model.gof_path is None:
+            st.warning(
+                "GOF image not found.\n\n"
+                f"Save `gof.png` inside:\n\n"
+                f"`{reference_model.folder}`"
+            )
+        else:
+            st.image(
+                str(reference_model.gof_path),
+                caption=(
+                    f"{reference_model.name} combined GOF plots"
+                ),
+                use_container_width=True,
+            )
+
+    with candidate_column:
+        st.markdown(
+            f"#### {candidate_model.name}"
+        )
+
+        if candidate_model.gof_path is None:
+            st.warning(
+                "GOF image not found.\n\n"
+                f"Save `gof.png` inside:\n\n"
+                f"`{candidate_model.folder}`"
+            )
+        else:
+            st.image(
+                str(candidate_model.gof_path),
+                caption=(
+                    f"{candidate_model.name} combined GOF plots"
+                ),
+                use_container_width=True,
+            )
+
+    st.caption(
+        "Each image should contain the complete four-panel "
+        "goodness-of-fit figure."
+    )
+
+
+def display_two_model_results(
+    reference_model: CandidateModel,
+    candidate_model: CandidateModel,
+) -> None:
+    candidates = [
+        reference_model,
+        candidate_model,
+    ]
+
+    parameter_comparison = compare_estimates(
+        candidates
+    )
+
+    metric_comparison = compare_metrics(
+        candidates
+    )
+
+    metric_differences = calculate_metric_differences(
+        metric_comparison=metric_comparison,
+        reference_model=reference_model.name,
+        candidate_model=candidate_model.name,
+        selected_metrics=[
+            "OFV",
+            "-2LL",
+            "AIC",
+            "BIC",
+        ],
+    )
+
+    st.subheader(
+        "1. Parameter Estimate Comparison"
+    )
+
+    st.dataframe(
+        parameter_comparison,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption(
+        "An outer join is used. Parameters unique to one model "
+        "are retained, and the other model shows a blank value."
+    )
+
+    st.subheader(
+        "2. Complete Metric Comparison"
+    )
+
+    st.dataframe(
+        metric_comparison,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption(
+        "An outer join is used. Model-specific metric rows, "
+        "including different ETA-shrinkage rows, are retained."
+    )
+
+    st.subheader(
+        "3. OFV, -2LL, AIC, and BIC Differences"
+    )
+
+    if metric_differences.empty:
+        st.warning(
+            "No matching numeric OFV, -2LL, AIC, or BIC rows "
+            "were found in both models."
+        )
+    else:
+        st.dataframe(
+            metric_differences,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.caption(
+            f"Difference is {candidate_model.name} minus "
+            f"{reference_model.name}. A negative value means "
+            "the candidate has a lower metric value."
+        )
+
+    display_two_model_gof_comparison(
+        reference_model=reference_model,
+        candidate_model=candidate_model,
+    )
+
+
+def render_two_model_stage(
+    stage_id: str,
+    stage_folder: Path,
+    selection_session_key: str,
+    key_prefix: str,
+    on_selection_change: Callable[[], None] | None = None,
+    show_header: bool = True,
+) -> None:
+    stage = STAGE_DEFINITIONS[
+        stage_id
+    ]
+
+    if show_header:
+        st.header(
+            stage.display_name
+        )
+
+    st.write(
+        stage.description
+    )
+
+    available_models = discover_models(
+        stage_folder
+    )
+
+    if len(available_models) < 2:
+        st.warning(
+            "At least two model folders are required in:\n\n"
+            f"`{stage_folder}`\n\n"
+            "Each model folder should contain:\n\n"
+            "- `estimates.xlsx` or `estimates.csv`\n"
+            "- `metrics.xlsx` or `metrics.csv`\n"
+            "- `gof.png`"
+        )
+        return
+
+    folder_names = list(
+        available_models.keys()
+    )
+
+    reference_column, candidate_column = st.columns(
+        2
+    )
+
+    with reference_column:
+        reference_folder_name = st.selectbox(
+            "Reference model",
+            options=folder_names,
+            format_func=format_folder_name,
+            key=f"{key_prefix}_reference",
+        )
+
+    candidate_options = [
+        folder_name
+        for folder_name in folder_names
+        if folder_name != reference_folder_name
+    ]
+
+    with candidate_column:
+        candidate_folder_name = st.selectbox(
+            "Candidate model",
+            options=candidate_options,
+            format_func=format_folder_name,
+            key=f"{key_prefix}_candidate",
+        )
+
     try:
-        required_paths = [
-            config["reference_estimates_path"],
-            config["reference_metrics_path"],
-            config["candidate_estimates_path"],
-            config["candidate_metrics_path"],
-            config["reference_gof_path"],
-            config["candidate_gof_path"],
-        ]
+        reference_model = create_candidate_from_folder(
+            folder_name=reference_folder_name,
+            model_folder=available_models[
+                reference_folder_name
+            ],
+        )
 
-        missing_paths = [
-            path
-            for path in required_paths
-            if not path.exists()
-        ]
+        candidate_model = create_candidate_from_folder(
+            folder_name=candidate_folder_name,
+            model_folder=available_models[
+                candidate_folder_name
+            ],
+        )
 
-        if missing_paths:
-            missing_text = "\n".join(
-                str(path)
-                for path in missing_paths
+        st.success(
+            "Model files loaded successfully."
+        )
+
+        display_two_model_results(
+            reference_model=reference_model,
+            candidate_model=candidate_model,
+        )
+
+    except (
+        ValueError,
+        TypeError,
+        FileNotFoundError,
+        pd.errors.ParserError,
+    ) as error:
+        st.error(
+            str(error)
+        )
+        return
+
+    st.subheader(
+        "5. Model Selection"
+    )
+
+    selected_model = st.radio(
+        "Select the preferred model",
+        options=[
+            reference_model.name,
+            candidate_model.name,
+        ],
+        key=f"{key_prefix}_preferred_model",
+        horizontal=True,
+    )
+
+    if st.button(
+        "Confirm Model Selection",
+        key=f"{key_prefix}_confirm",
+        type="primary",
+    ):
+        previous_selection = st.session_state.get(
+            selection_session_key
+        )
+
+        if (
+            previous_selection != selected_model
+            and on_selection_change is not None
+        ):
+            on_selection_change()
+
+        st.session_state[
+            selection_session_key
+        ] = selected_model
+
+        st.success(
+            f"Selected model: {selected_model}"
+        )
+
+    current_selection = st.session_state.get(
+        selection_session_key
+    )
+
+    if current_selection:
+        st.info(
+            "Current confirmed selection: "
+            f"**{current_selection}**"
+        )
+
+
+def render_absorption_stage() -> None:
+    st.header(
+        "Stage 1: Absorption Model Selection"
+    )
+
+    workflow_choice = st.radio(
+        "Do you need to compare absorption models?",
+        options=[
+            "Yes, compare absorption models",
+            "No, use a fixed absorption model",
+        ],
+        key="absorption_workflow_choice",
+    )
+
+    if (
+        workflow_choice
+        == "No, use a fixed absorption model"
+    ):
+        fixed_absorption = st.text_input(
+            "Fixed absorption model",
+            placeholder="Example: FIRST ORDER",
+            key="fixed_absorption_model",
+        )
+
+        if st.button(
+            "Confirm Fixed Absorption Model",
+            key="confirm_fixed_absorption",
+            type="primary",
+        ):
+            fixed_absorption = (
+                fixed_absorption.strip()
             )
 
-            raise FileNotFoundError(
-                "The following required files are missing:\n"
-                f"{missing_text}"
+            if not fixed_absorption:
+                st.error(
+                    "Enter the fixed absorption model."
+                )
+                return
+
+            previous_selection = st.session_state.get(
+                "selected_absorption_model"
             )
 
-        reference_estimates = pd.read_excel(
-            config["reference_estimates_path"],
-            sheet_name=config["reference_sheet"],
+            if previous_selection != fixed_absorption:
+                reset_after_absorption_change()
+
+            st.session_state[
+                "selected_absorption_model"
+            ] = fixed_absorption
+
+            st.success(
+                "Fixed absorption model selected: "
+                f"{fixed_absorption}"
+            )
+
+        current_absorption = st.session_state.get(
+            "selected_absorption_model"
         )
 
-        reference_metrics = pd.read_excel(
-            config["reference_metrics_path"],
-            sheet_name=config["reference_sheet"],
-        )
+        if current_absorption:
+            st.info(
+                "Current confirmed absorption model: "
+                f"**{current_absorption}**"
+            )
 
-        candidate_estimates = pd.read_excel(
-            config["candidate_estimates_path"],
-            sheet_name=config["candidate_sheet"],
-        )
+        return
 
-        candidate_metrics = pd.read_excel(
-            config["candidate_metrics_path"],
-            sheet_name=config["candidate_sheet"],
-        )
+    render_two_model_stage(
+        stage_id=ABSORPTION_STAGE,
+        stage_folder=ABSORPTION_DATA_DIR,
+        selection_session_key=(
+            "selected_absorption_model"
+        ),
+        key_prefix="absorption",
+        on_selection_change=(
+            reset_after_absorption_change
+        ),
+        show_header=False,
+    )
 
-        validate_estimate_table(
-            reference_estimates,
-            reference_model,
-        )
 
-        validate_estimate_table(
-            candidate_estimates,
-            candidate_model,
-        )
+def render_structural_stage() -> None:
+    st.header(
+        "Stage 2: Structural Model Selection"
+    )
 
-        validate_metric_table(
-            reference_metrics,
-            reference_model,
-        )
+    selected_absorption = st.session_state.get(
+        "selected_absorption_model"
+    )
 
-        validate_metric_table(
-            candidate_metrics,
-            candidate_model,
+    if selected_absorption is None:
+        st.info(
+            "Complete Stage 1 before starting "
+            "structural-model selection."
         )
+        return
 
-        estimate_comparison = compare_estimates(
-            {
-                reference_model: reference_estimates,
-                candidate_model: candidate_estimates,
-            }
+    st.info(
+        "Absorption model carried forward: "
+        f"**{selected_absorption}**"
+    )
+
+    st.write(
+        "Both structural candidates should use the selected "
+        "absorption model shown above."
+    )
+
+    render_two_model_stage(
+        stage_id=STRUCTURAL_STAGE,
+        stage_folder=STRUCTURAL_DATA_DIR,
+        selection_session_key=(
+            "selected_structural_model"
+        ),
+        key_prefix="structural",
+        on_selection_change=(
+            reset_after_structural_change
+        ),
+        show_header=False,
+    )
+
+
+def render_error_stage() -> None:
+    """
+    Compare all available residual-error models together.
+
+    Typical folders:
+        additive
+        proportional
+        combined
+    """
+
+    st.header(
+        "Stage 3: Residual Error Model Selection"
+    )
+
+    selected_absorption = st.session_state.get(
+        "selected_absorption_model"
+    )
+
+    selected_structural = st.session_state.get(
+        "selected_structural_model"
+    )
+
+    if selected_structural is None:
+        st.info(
+            "Complete Stage 2 before starting "
+            "residual-error-model selection."
+        )
+        return
+
+    st.info(
+        "Components carried forward:\n\n"
+        f"- Absorption model: **{selected_absorption}**\n"
+        f"- Structural model: **{selected_structural}**"
+    )
+
+    st.write(
+        "All residual-error candidates should use the selected "
+        "absorption and structural model."
+    )
+
+    available_models = discover_models(
+        ERROR_DATA_DIR
+    )
+
+    if len(available_models) < 2:
+        st.warning(
+            "At least two residual-error model folders are required in:\n\n"
+            f"`{ERROR_DATA_DIR}`\n\n"
+            "For a complete comparison, create:\n\n"
+            "- `additive/`\n"
+            "- `proportional/`\n"
+            "- `combined/`\n\n"
+            "Each folder should contain:\n\n"
+            "- `estimates.xlsx` or `estimates.csv`\n"
+            "- `metrics.xlsx` or `metrics.csv`\n"
+            "- `gof.png`"
+        )
+        return
+
+    preferred_order = [
+        "additive",
+        "proportional",
+        "combined",
+    ]
+
+    ordered_folder_names = [
+        folder_name
+        for folder_name in preferred_order
+        if folder_name in available_models
+    ]
+
+    additional_folder_names = [
+        folder_name
+        for folder_name in available_models
+        if folder_name not in preferred_order
+    ]
+
+    ordered_folder_names.extend(
+        additional_folder_names
+    )
+
+    try:
+        residual_candidates = [
+            create_candidate_from_folder(
+                folder_name=folder_name,
+                model_folder=available_models[
+                    folder_name
+                ],
+            )
+            for folder_name in ordered_folder_names
+        ]
+
+        parameter_comparison = compare_estimates(
+            residual_candidates
         )
 
         metric_comparison = compare_metrics(
-            {
-                reference_model: reference_metrics,
-                candidate_model: candidate_metrics,
-            }
+            residual_candidates
         )
 
-        available_metrics = set(
-            metric_comparison["Metric"].tolist()
+    except (
+        ValueError,
+        TypeError,
+        FileNotFoundError,
+        pd.errors.ParserError,
+    ) as error:
+        st.error(
+            str(error)
         )
+        return
 
-        selected_metrics = [
-            metric
-            for metric in SELECTED_METRICS
-            if metric in available_metrics
-        ]
+    st.success(
+        f"{len(residual_candidates)} residual-error "
+        "model files loaded successfully."
+    )
 
-        metric_differences = calculate_metric_differences(
+    st.subheader(
+        "1. Parameter Estimate Comparison"
+    )
+
+    st.dataframe(
+        parameter_comparison,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption(
+        "An outer join is used. Parameters unique to one "
+        "residual-error model are retained."
+    )
+
+    st.subheader(
+        "2. Complete Metric Comparison"
+    )
+
+    st.dataframe(
+        metric_comparison,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption(
+        "All model-specific metric rows are retained."
+    )
+
+    st.subheader(
+        "3. OFV, -2LL, AIC, and BIC Differences"
+    )
+
+    model_names = [
+        candidate.name
+        for candidate in residual_candidates
+    ]
+
+    reference_model_name = st.selectbox(
+        "Reference residual-error model",
+        options=model_names,
+        key="residual_error_difference_reference",
+    )
+
+    difference_tables: list[
+        pd.DataFrame
+    ] = []
+
+    for candidate_name in model_names:
+        if candidate_name == reference_model_name:
+            continue
+
+        difference_table = calculate_metric_differences(
             metric_comparison=metric_comparison,
-            reference_model=reference_model,
-            candidate_model=candidate_model,
-            selected_metrics=selected_metrics,
+            reference_model=reference_model_name,
+            candidate_model=candidate_name,
+            selected_metrics=[
+                "OFV",
+                "-2LL",
+                "AIC",
+                "BIC",
+            ],
         )
 
-        st.session_state["comparison_results"] = {
-            "comparison_type": comparison_type,
-            "reference_model": reference_model,
-            "candidate_model": candidate_model,
-            "metric_comparison": metric_comparison,
-            "metric_differences": metric_differences,
-            "estimate_comparison": estimate_comparison,
-            "reference_gof_path": config["reference_gof_path"],
-            "candidate_gof_path": config["candidate_gof_path"],
-        }
+        if not difference_table.empty:
+            difference_tables.append(
+                difference_table
+            )
+
+    if not difference_tables:
+        st.warning(
+            "No matching numeric OFV, -2LL, AIC, or BIC "
+            "rows were found."
+        )
+    else:
+        for difference_table in difference_tables:
+            st.dataframe(
+                difference_table,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.caption(
+            "Each difference is candidate minus reference. "
+            "A negative value means the candidate has a lower metric."
+        )
+
+    st.subheader(
+        "4. GOF Comparison"
+    )
+
+    gof_columns = st.columns(
+        len(residual_candidates)
+    )
+
+    for column, candidate in zip(
+        gof_columns,
+        residual_candidates,
+    ):
+        with column:
+            st.markdown(
+                f"#### {candidate.name}"
+            )
+
+            if candidate.gof_path is None:
+                st.warning(
+                    "GOF image not found.\n\n"
+                    f"Save `gof.png` inside:\n\n"
+                    f"`{candidate.folder}`"
+                )
+            else:
+                st.image(
+                    str(candidate.gof_path),
+                    caption=(
+                        f"{candidate.name} combined GOF plots"
+                    ),
+                    use_container_width=True,
+                )
+
+    st.caption(
+        "Each GOF image should contain the complete "
+        "four-panel goodness-of-fit figure."
+    )
+
+    st.subheader(
+        "5. Residual Error Model Selection"
+    )
+
+    selected_model = st.radio(
+        "Select the preferred residual-error model",
+        options=model_names,
+        key="residual_error_preferred_model",
+        horizontal=True,
+    )
+
+    if st.button(
+        "Confirm Residual Error Model",
+        key="residual_error_confirm",
+        type="primary",
+    ):
+        st.session_state[
+            "selected_error_model"
+        ] = selected_model
 
         st.success(
-            "Model comparison completed successfully."
+            "Selected residual-error model: "
+            f"{selected_model}"
         )
 
-    except FileNotFoundError as error:
-        st.error(
-            "One or more required files could not be found."
+    current_selection = st.session_state.get(
+        "selected_error_model"
+    )
+
+    if current_selection:
+        st.info(
+            "Current confirmed residual-error model: "
+            f"**{current_selection}**"
         )
 
-        st.code(str(error))
 
-    except ValueError as error:
-        st.error(str(error))
+def render_sidebar_summary() -> None:
+    st.sidebar.header(
+        "Current Model Selection"
+    )
 
-    except Exception as error:
-        st.error(
-            "An unexpected error occurred."
+    selected_absorption = st.session_state.get(
+        "selected_absorption_model"
+    )
+
+    selected_structural = st.session_state.get(
+        "selected_structural_model"
+    )
+
+    selected_error = st.session_state.get(
+        "selected_error_model"
+    )
+
+    st.sidebar.markdown(
+        "**Absorption model**"
+    )
+
+    st.sidebar.write(
+        selected_absorption
+        or "Not selected"
+    )
+
+    st.sidebar.markdown(
+        "**Structural model**"
+    )
+
+    st.sidebar.write(
+        selected_structural
+        or "Not selected"
+    )
+
+    st.sidebar.markdown(
+        "**Residual error model**"
+    )
+
+    st.sidebar.write(
+        selected_error
+        or "Not selected"
+    )
+
+    if (
+        selected_absorption
+        and selected_structural
+        and selected_error
+    ):
+        final_summary = create_final_model_summary(
+            absorption_model=selected_absorption,
+            structural_model=selected_structural,
+            residual_error_model=selected_error,
         )
 
-        st.exception(error)
-
-
-# =========================================================
-# Display results
-# =========================================================
-
-results = st.session_state.get("comparison_results")
-
-if results is not None:
-    if results["comparison_type"] != comparison_type:
-        st.warning(
-            "The displayed results belong to another "
-            "comparison type. Click Run Model Comparison "
-            "to refresh the results."
+        st.sidebar.success(
+            "Final base model complete"
         )
 
-    else:
-        result_reference = results["reference_model"]
-        result_candidate = results["candidate_model"]
-
-        st.divider()
-
-        # -------------------------------------------------
-        # Model metrics
-        # -------------------------------------------------
-
-        st.subheader("Model Metrics")
-
-        st.caption(
-            "Side-by-side comparison of model fit, "
-            "estimation, shrinkage, and dataset metrics."
+        st.sidebar.json(
+            final_summary
         )
 
-        st.dataframe(
-            results["metric_comparison"],
-            use_container_width=True,
-            hide_index=True,
-        )
 
-        # -------------------------------------------------
-        # Metric differences
-        # -------------------------------------------------
+def main() -> None:
+    initialize_session_state()
 
-        st.subheader("Selected Metric Differences")
+    st.title(
+        "PharmaAI Model Reviewer"
+    )
 
-        st.caption(
-            f"Difference = "
-            f"{result_candidate} - {result_reference}"
-        )
+    st.write(
+        "Sequential comparison of absorption, structural, "
+        "and residual-error models."
+    )
 
-        st.dataframe(
-            results["metric_differences"],
-            use_container_width=True,
-            hide_index=True,
-        )
+    st.markdown(
+        """
+        **Workflow**
 
-        # -------------------------------------------------
-        # Parameter estimates
-        # -------------------------------------------------
+        1. Compare absorption models or specify a fixed absorption model.
+        2. Compare structural models.
+        3. Compare all available residual-error models.
+        4. Review the final selected base model.
+        """
+    )
 
-        st.subheader("Parameter Estimate Comparison")
+    render_absorption_stage()
 
-        st.caption(
-            "An outer merge is used, so parameters present "
-            "in only one model are retained."
-        )
+    st.divider()
 
-        st.dataframe(
-            results["estimate_comparison"],
-            use_container_width=True,
-            hide_index=True,
-        )
+    render_structural_stage()
 
-        # -------------------------------------------------
-        # Diagnostic plots
-        # -------------------------------------------------
+    st.divider()
 
-        st.subheader("Diagnostic Plot Comparison")
+    render_error_stage()
 
-        st.caption(
-            "Compare goodness-of-fit plots using the same "
-            "plot types and axis conventions for both models."
-        )
+    render_sidebar_summary()
 
-        plot_column_1, plot_column_2 = st.columns(2)
 
-        with plot_column_1:
-            st.markdown(
-                f"#### {result_reference}"
-            )
-
-            st.image(
-                str(results["reference_gof_path"]),
-                caption=(
-                    f"{result_reference} diagnostic plots"
-                ),
-                use_container_width=True,
-            )
-
-        with plot_column_2:
-            st.markdown(
-                f"#### {result_candidate}"
-            )
-
-            st.image(
-                str(results["candidate_gof_path"]),
-                caption=(
-                    f"{result_candidate} diagnostic plots"
-                ),
-                use_container_width=True,
-            )
-
-        # -------------------------------------------------
-        # Reviewer interpretation
-        # -------------------------------------------------
-
-        st.divider()
-
-        st.subheader("Reviewer Interpretation")
-
-        selected_model = st.radio(
-            "Preferred Model",
-            options=[
-                result_reference,
-                result_candidate,
-            ],
-            horizontal=True,
-        )
-
-        reviewer_comment = st.text_area(
-            "Reviewer Comment",
-            placeholder=(
-                "Consider OFV, AIC, BIC, convergence, "
-                "parameter estimates, residual patterns, "
-                "diagnostic plots, and scientific plausibility."
-            ),
-            height=140,
-        )
-
-        st.write(
-            f"Selected model: **{selected_model}**"
-        )
-
-        if reviewer_comment.strip():
-            st.write("Reviewer comment:")
-            st.write(reviewer_comment)
+if __name__ == "__main__":
+    main()

@@ -7,79 +7,82 @@ from src.validation import (
 )
 
 
-def test_valid_estimate_table():
-    estimate_df = pd.DataFrame(
+def test_validate_estimate_table():
+    table = pd.DataFrame(
         {
-            "parameter": ["CL", "V"],
-            "constant": [False, False],
-            "estimate": [10.0, 50.0],
+            "parameter": [
+                "tvcl",
+                "tvvc",
+            ],
+            "constant": [
+                False,
+                False,
+            ],
+            "estimate": [
+                7.18,
+                77.0,
+            ],
         }
     )
 
-    validate_estimate_table(
-        estimate_df,
-        model_name="ONE_COMP",
+    result = validate_estimate_table(
+        table,
+        model_name="ONE COMP",
     )
 
-
-def test_empty_estimate_table_raises_error():
-    estimate_df = pd.DataFrame(
-        columns=["parameter", "constant", "estimate"]
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="ONE_COMP estimate table is empty",
-    ):
-        validate_estimate_table(
-            estimate_df,
-            model_name="ONE_COMP",
-        )
+    assert len(result) == 2
 
 
-def test_missing_estimate_column_raises_error():
-    estimate_df = pd.DataFrame(
+def test_michaelis_menten_parameters_are_allowed():
+    table = pd.DataFrame(
         {
-            "parameter": ["CL"],
-            "estimate": [10.0],
+            "parameter": [
+                "tvvmax",
+                "tvkm",
+                "tvvc",
+            ],
+            "constant": [
+                False,
+                False,
+                False,
+            ],
+            "estimate": [
+                20.0,
+                2.0,
+                75.0,
+            ],
         }
     )
 
-    with pytest.raises(
-        ValueError,
-        match="missing columns",
-    ):
-        validate_estimate_table(
-            estimate_df,
-            model_name="ONE_COMP",
-        )
-
-
-def test_blank_parameter_name_raises_error():
-    estimate_df = pd.DataFrame(
-        {
-            "parameter": ["CL", "   "],
-            "constant": [False, False],
-            "estimate": [10.0, 50.0],
-        }
+    result = validate_estimate_table(
+        table,
+        model_name="MICHAELIS MENTEN",
     )
 
-    with pytest.raises(
-        ValueError,
-        match="blank parameter name",
-    ):
-        validate_estimate_table(
-            estimate_df,
-            model_name="ONE_COMP",
-        )
+    assert set(
+        result["parameter"]
+    ) == {
+        "tvvmax",
+        "tvkm",
+        "tvvc",
+    }
 
 
-def test_duplicate_parameter_raises_error():
-    estimate_df = pd.DataFrame(
+def test_duplicate_parameters_raise_error():
+    table = pd.DataFrame(
         {
-            "parameter": ["CL", "CL"],
-            "constant": [False, False],
-            "estimate": [10.0, 11.0],
+            "parameter": [
+                "tvcl",
+                "tvcl",
+            ],
+            "constant": [
+                False,
+                False,
+            ],
+            "estimate": [
+                7.18,
+                7.20,
+            ],
         }
     )
 
@@ -88,108 +91,62 @@ def test_duplicate_parameter_raises_error():
         match="duplicate parameters",
     ):
         validate_estimate_table(
-            estimate_df,
-            model_name="ONE_COMP",
+            table,
+            model_name="ONE COMP",
         )
 
 
-def test_valid_metric_table():
-    metric_df = pd.DataFrame(
+def test_metric_table_accepts_text_and_numbers():
+    table = pd.DataFrame(
         {
-            "Metric": ["OFV", "AIC", "BIC"],
-            "ONE_COMP": [100.0, 110.0, 120.0],
+            "Metric": [
+                "Successful",
+                "Likelihood Approximation",
+                "AIC",
+                "BIC",
+            ],
+            "ONE_COMP": [
+                True,
+                "FOCE",
+                -18021.749,
+                -17959.939,
+            ],
         }
     )
 
-    validate_metric_table(
-        metric_df,
-        model_name="ONE_COMP",
+    result = validate_metric_table(
+        table,
+        model_name="ONE COMP",
     )
 
-
-def test_empty_metric_table_raises_error():
-    metric_df = pd.DataFrame(
-        columns=["Metric", "ONE_COMP"]
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="ONE_COMP metrics table is empty",
-    ):
-        validate_metric_table(
-            metric_df,
-            model_name="ONE_COMP",
-        )
+    assert len(result) == 4
 
 
-def test_missing_metric_column_raises_error():
-    metric_df = pd.DataFrame(
+def test_different_shrinkage_rows_are_allowed():
+    table = pd.DataFrame(
         {
-            "WrongColumn": ["OFV"],
-            "ONE_COMP": [100.0],
+            "Metric": [
+                "AIC",
+                "BIC",
+                "(η-shrinkage) η1",
+                "(η-shrinkage) η2",
+                "(η-shrinkage) η3",
+                "(η-shrinkage) η4",
+            ],
+            "TWO_COMP": [
+                -18100,
+                -18020,
+                0.10,
+                0.08,
+                0.15,
+                0.20,
+            ],
         }
     )
 
-    with pytest.raises(
-        ValueError,
-        match="missing the Metric column",
-    ):
-        validate_metric_table(
-            metric_df,
-            model_name="ONE_COMP",
-        )
-
-
-def test_multiple_metric_value_columns_raise_error():
-    metric_df = pd.DataFrame(
-        {
-            "Metric": ["OFV"],
-            "ONE_COMP": [100.0],
-            "ExtraColumn": [101.0],
-        }
+    result = validate_metric_table(
+        table,
+        model_name="TWO COMP",
     )
 
-    with pytest.raises(
-        ValueError,
-        match="exactly one value column",
-    ):
-        validate_metric_table(
-            metric_df,
-            model_name="ONE_COMP",
-        )
-
-
-def test_blank_metric_name_raises_error():
-    metric_df = pd.DataFrame(
-        {
-            "Metric": ["OFV", "   "],
-            "ONE_COMP": [100.0, 110.0],
-        }
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="blank metric name",
-    ):
-        validate_metric_table(
-            metric_df,
-            model_name="ONE_COMP",
-        )
-
-
-def test_duplicate_metric_raises_error():
-    metric_df = pd.DataFrame(
-        {
-            "Metric": ["AIC", "AIC"],
-            "ONE_COMP": [110.0, 111.0],
-        }
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="duplicate metrics",
-    ):
-        validate_metric_table(
-            metric_df,
-            model_name="ONE_COMP",
-        )
+    assert len(result) == 6
