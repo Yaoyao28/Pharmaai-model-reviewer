@@ -257,3 +257,118 @@ def test_metric_differences():
         "MICHAELIS MENTEN minus ONE COMP"
         in result.columns
     )
+
+
+
+def test_metric_differences():
+    metric_comparison = pd.DataFrame(
+        {
+            "Metric": [
+                "-2LL",
+                "AIC",
+                "BIC",
+                "Successful",
+            ],
+            "ONE COMP": [
+                -18039,
+                -18021,
+                -17959,
+                True,
+            ],
+            "MICHAELIS MENTEN": [
+                -18120,
+                -18098,
+                -18010,
+                True,
+            ],
+        }
+    )
+
+    result = calculate_metric_differences(
+        metric_comparison=metric_comparison,
+        reference_model="ONE COMP",
+        candidate_model="MICHAELIS MENTEN",
+        selected_metrics=[
+            "-2LL",
+            "AIC",
+            "BIC",
+        ],
+    )
+
+    assert len(result) == 3
+
+    assert (
+        "MICHAELIS MENTEN minus ONE COMP"
+        in result.columns
+    )
+
+
+def test_compare_estimates_excludes_constant_columns():
+    one_comp = create_candidate(
+        name="ONE COMP",
+        parameters=[
+            "tvcl",
+            "tvvc",
+        ],
+        estimates=[
+            7.18,
+            77.0,
+        ],
+        metric_names=[
+            "AIC",
+            "BIC",
+        ],
+        metric_values=[
+            -18021,
+            -17959,
+        ],
+    )
+
+    two_comp = create_candidate(
+        name="TWO COMP",
+        parameters=[
+            "tvcl",
+            "tvvc",
+            "tvq",
+        ],
+        estimates=[
+            7.10,
+            50.0,
+            2.0,
+        ],
+        metric_names=[
+            "AIC",
+            "BIC",
+        ],
+        metric_values=[
+            -18076,
+            -17990,
+        ],
+    )
+
+    result = compare_estimates(
+        [
+            one_comp,
+            two_comp,
+        ]
+    )
+
+    assert list(result.columns) == [
+        "parameter",
+        "ONE COMP Estimate",
+        "TWO COMP Estimate",
+    ]
+
+    assert "ONE COMP Constant" not in result.columns
+    assert "TWO COMP Constant" not in result.columns
+
+    assert "tvq" in result["parameter"].tolist()
+
+
+
+
+
+
+
+
+

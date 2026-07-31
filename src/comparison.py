@@ -72,16 +72,14 @@ def compare_estimates(
         candidate_table = candidate.estimates[
             [
                 "parameter",
-                "constant",
+        
                 "estimate",
             ]
         ].copy()
 
         candidate_table = candidate_table.rename(
             columns={
-                "constant": (
-                    f"{candidate.name} Constant"
-                ),
+      
                 "estimate": (
                     f"{candidate.name} Estimate"
                 ),

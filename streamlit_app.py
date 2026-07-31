@@ -674,20 +674,20 @@ def render_error_stage() -> None:
         "3. OFV, -2LL, AIC, and BIC Differences"
     )
 
+
+
     model_names = [
         candidate.name
         for candidate in residual_candidates
     ]
 
-    reference_model_name = st.selectbox(
-        "Reference residual-error model",
-        options=model_names,
-        key="residual_error_difference_reference",
+    reference_model_name = "ADDITIVE"
+
+    st.caption(
+        "Reference residual-error model: ADDITIVE"
     )
 
-    difference_tables: list[
-        pd.DataFrame
-    ] = []
+    difference_summary: pd.DataFrame | None = None
 
     for candidate_name in model_names:
         if candidate_name == reference_model_name:
@@ -705,28 +705,63 @@ def render_error_stage() -> None:
             ],
         )
 
-        if not difference_table.empty:
-            difference_tables.append(
-                difference_table
+        if difference_table.empty:
+            continue
+
+        difference_column = (
+            f"{candidate_name} minus {reference_model_name}"
+        )
+
+        candidate_difference = difference_table[
+            [
+                "Metric",
+                difference_column,
+            ]
+        ].copy()
+
+        if difference_summary is None:
+            difference_summary = candidate_difference
+        else:
+            difference_summary = difference_summary.merge(
+                candidate_difference,
+                on="Metric",
+                how="outer",
+                sort=False,
             )
 
-    if not difference_tables:
+    if difference_summary is None or difference_summary.empty:
         st.warning(
             "No matching numeric OFV, -2LL, AIC, or BIC "
             "rows were found."
         )
     else:
-        for difference_table in difference_tables:
-            st.dataframe(
-                difference_table,
-                use_container_width=True,
-                hide_index=True,
-            )
+        st.dataframe(
+            difference_summary,
+            use_container_width=True,
+            hide_index=True,
+        )
 
         st.caption(
-            "Each difference is candidate minus reference. "
+            "Each column is candidate minus ADDITIVE. "
             "A negative value means the candidate has a lower metric."
         )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     st.subheader(
         "4. GOF Comparison"
