@@ -31,6 +31,11 @@ from src.workflow import (
     STAGE_DEFINITIONS,
     create_final_model_summary,
 )
+from src.ai_review import (
+    build_residual_error_evidence,
+    build_two_model_evidence,
+)
+from src.llm.factory import create_llm_client
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -114,6 +119,101 @@ def create_candidate_from_folder(
     )
 
 
+def _safe_widget_key(value: str) -> str:
+    """Create a stable Streamlit widget key fragment."""
+
+    return "".join(
+        character.lower()
+        if character.isalnum()
+        else "_"
+        for character in value
+    ).strip("_")
+
+
+def render_llm_review(
+    evidence: dict,
+    key_prefix: str,
+    confirmation_text: str,
+    heading: str,
+) -> None:
+    """
+    Render a provider-independent LLM review section.
+
+    The Streamlit UI calls the common LLMClient interface rather than
+    importing Ollama directly. Future providers can be added through
+    src/llm/factory.py.
+    """
+
+    st.subheader(heading)
+
+    try:
+        client = create_llm_client()
+    except ValueError as error:
+        st.error(str(error))
+        return
+
+    connected, connection_message = client.check_connection()
+
+    if connected:
+        st.success(
+            f"{client.provider_name} connected. "
+            f"Model: {client.model_name}"
+        )
+    else:
+        st.warning(connection_message)
+
+    st.caption(
+        "The LLM receives structured application-generated evidence, "
+        "not raw Excel files. The human reviewer makes the final decision."
+    )
+
+    confirmed = st.checkbox(
+        confirmation_text,
+        key=f"{key_prefix}_comparison_confirmed",
+    )
+
+    review_state_key = f"{key_prefix}_llm_review"
+    evidence_state_key = f"{key_prefix}_llm_evidence"
+
+    if st.button(
+        "Generate LLM Review",
+        key=f"{key_prefix}_generate_llm_review",
+        disabled=not confirmed or not connected,
+    ):
+        try:
+            with st.spinner(
+                f"Generating review with "
+                f"{client.provider_name}..."
+            ):
+                review = client.generate_review(evidence)
+
+            st.session_state[review_state_key] = review
+            st.session_state[evidence_state_key] = evidence
+
+        except (
+            ValueError,
+            RuntimeError,
+        ) as error:
+            st.error(str(error))
+
+    saved_review = st.session_state.get(
+        review_state_key
+    )
+
+    if saved_review:
+        st.markdown(saved_review)
+
+        with st.expander(
+            "View structured evidence sent to the LLM"
+        ):
+            st.json(
+                st.session_state.get(
+                    evidence_state_key,
+                    {},
+                )
+            )
+
+
 def display_two_model_gof_comparison(
     reference_model: CandidateModel,
     candidate_model: CandidateModel,
@@ -171,6 +271,8 @@ def display_two_model_gof_comparison(
 def display_two_model_results(
     reference_model: CandidateModel,
     candidate_model: CandidateModel,
+    stage_name: str,
+    key_prefix: str,
 ) -> None:
     candidates = [
         reference_model,
@@ -252,6 +354,36 @@ def display_two_model_results(
     display_two_model_gof_comparison(
         reference_model=reference_model,
         candidate_model=candidate_model,
+    )
+
+    evidence = build_two_model_evidence(
+        stage_name=stage_name,
+        reference_model=reference_model.name,
+        candidate_model=candidate_model.name,
+        metric_comparison=metric_comparison,
+        parameter_comparison=parameter_comparison,
+        reference_gof_available=(
+            reference_model.gof_path is not None
+        ),
+        candidate_gof_available=(
+            candidate_model.gof_path is not None
+        ),
+    )
+
+    review_key_prefix = (
+        f"{key_prefix}_"
+        f"{_safe_widget_key(reference_model.name)}_"
+        f"{_safe_widget_key(candidate_model.name)}"
+    )
+
+    render_llm_review(
+        evidence=evidence,
+        key_prefix=review_key_prefix,
+        confirmation_text=(
+            "I confirm that these candidates used the same "
+            "dataset and comparable estimation settings."
+        ),
+        heading="5. Local LLM-Assisted Review",
     )
 
 
@@ -343,6 +475,8 @@ def render_two_model_stage(
         display_two_model_results(
             reference_model=reference_model,
             candidate_model=candidate_model,
+            stage_name=stage.display_name,
+            key_prefix=key_prefix,
         )
 
     except (
@@ -357,7 +491,7 @@ def render_two_model_stage(
         return
 
     st.subheader(
-        "5. Model Selection"
+        "6. Model Selection"
     )
 
     selected_model = st.radio(
@@ -800,8 +934,34 @@ def render_error_stage() -> None:
         "four-panel goodness-of-fit figure."
     )
 
+    gof_availability = {
+        candidate.name: (
+            candidate.gof_path is not None
+        )
+        for candidate in residual_candidates
+    }
+
+    residual_evidence = build_residual_error_evidence(
+        model_names=model_names,
+        reference_model="ADDITIVE",
+        metric_comparison=metric_comparison,
+        parameter_comparison=parameter_comparison,
+        gof_availability=gof_availability,
+    )
+
+    render_llm_review(
+        evidence=residual_evidence,
+        key_prefix="residual_error",
+        confirmation_text=(
+            "I confirm that ADDITIVE, PROPORTIONAL, and "
+            "COMBINED used the same dataset, selected structural "
+            "model, and comparable estimation settings."
+        ),
+        heading="5. Local LLM-Assisted Residual Error Review",
+    )
+
     st.subheader(
-        "5. Residual Error Model Selection"
+        "6. Residual Error Model Selection"
     )
 
     selected_model = st.radio(
@@ -837,6 +997,24 @@ def render_error_stage() -> None:
 
 
 def render_sidebar_summary() -> None:
+    st.sidebar.header(
+        "LLM Status"
+    )
+
+    try:
+        client = create_llm_client()
+        connected, message = client.check_connection()
+
+        if connected:
+            st.sidebar.success(message)
+        else:
+            st.sidebar.warning(message)
+
+    except ValueError as error:
+        st.sidebar.error(str(error))
+
+    st.sidebar.divider()
+
     st.sidebar.header(
         "Current Model Selection"
     )
