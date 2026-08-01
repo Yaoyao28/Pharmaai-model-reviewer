@@ -4,3 +4,4 @@ openpyxl
 pillow
 pytest
 ollama
+reportlab

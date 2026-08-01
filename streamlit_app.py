@@ -24,6 +24,7 @@ from src.validation import (
     validate_estimate_table,
     validate_metric_table,
 )
+from src.report_ui import render_final_report_section
 from src.workflow import (
     ABSORPTION_STAGE,
     ERROR_STAGE,
@@ -58,6 +59,12 @@ def initialize_session_state() -> None:
         "selected_absorption_model": None,
         "selected_structural_model": None,
         "selected_error_model": None,
+        "absorption_llm_review": None,
+        "absorption_llm_evidence": None,
+        "structural_llm_review": None,
+        "structural_llm_evidence": None,
+        "residual_llm_review": None,
+        "residual_llm_evidence": None,
     }
 
     for key, default_value in defaults.items():
@@ -189,6 +196,16 @@ def render_llm_review(
 
             st.session_state[review_state_key] = review
             st.session_state[evidence_state_key] = evidence
+
+            if key_prefix.startswith("absorption_"):
+                st.session_state["absorption_llm_review"] = review
+                st.session_state["absorption_llm_evidence"] = evidence
+            elif key_prefix.startswith("structural_"):
+                st.session_state["structural_llm_review"] = review
+                st.session_state["structural_llm_evidence"] = evidence
+            elif key_prefix == "residual_error":
+                st.session_state["residual_llm_review"] = review
+                st.session_state["residual_llm_evidence"] = evidence
 
         except (
             ValueError,
@@ -1110,6 +1127,10 @@ def main() -> None:
     st.divider()
 
     render_error_stage()
+
+    st.divider()
+
+    render_final_report_section()
 
     render_sidebar_summary()
 
